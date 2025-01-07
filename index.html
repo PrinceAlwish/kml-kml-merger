@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Geospatial File Merger</title>
+	<link rel="icon" href="AI_1.png" type="image/png">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        #file-input {
+            margin-bottom: 20px;
+        }
+        #file-list {
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+            padding: 10px;
+        }
+        #conversion-options {
+            margin-bottom: 20px;
+        }
+        button {
+            margin: 5px;
+            padding: 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 5px 0;
+            padding: 5px;
+            background-color: #f1f1f1;
+        }
+    </style>
+</head>
+<body>
+    <h1>Geospatial File Merger</h1>
+    
+    <div id="file-input">
+        <input type="file" id="kml-kmz-input" accept=".kml,.kmz" multiple>
+        <button onclick="addFiles()">Add Files</button>
+    </div>
+
+    <div id="file-list"></div>
+
+    <div id="conversion-options">
+        <h3>Convert To:</h3>
+        <button onclick="convertFiles('geojson')">GeoJSON (.geojson)</button>
+    
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <script>
+        // Ensure libraries are loaded before running script
+        window.onload = function() {
+            // Check if libraries are loaded
+            if (typeof JSZip === 'undefined') {
+                console.error('JSZip library not loaded');
+                alert('Error: Required library JSZip is not loaded. Please check your internet connection.');
+                return;
+            }
+
+            // The rest of the existing script remains the same
+            let uploadedFiles = [];
+
+            function addFiles() {
+                const fileInput = document.getElementById('kml-kmz-input');
+                const fileListContainer = document.getElementById('file-list');
+
+                Array.from(fileInput.files).forEach(file => {
+                    // Prevent duplicate files
+                    if (!uploadedFiles.some(f => f.name === file.name)) {
+                        uploadedFiles.push(file);
+                        
+                        const fileItem = document.createElement('div');
+                        fileItem.className = 'file-item';
+                        fileItem.innerHTML = `
+                            ${file.name}
+                            <button onclick="removeFile('${file.name}')">Remove</button>
+                        `;
+                        fileListContainer.appendChild(fileItem);
+                    }
+                });
+
+                // Clear the file input
+                fileInput.value = '';
+            }
+
+            function removeFile(fileName) {
+                uploadedFiles = uploadedFiles.filter(f => f.name !== fileName);
+                renderFileList();
+            }
+
+            function renderFileList() {
+                const fileListContainer = document.getElementById('file-list');
+                fileListContainer.innerHTML = '';
+
+                uploadedFiles.forEach(file => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-item';
+                    fileItem.innerHTML = `
+                        ${file.name}
+                        <button onclick="removeFile('${file.name}')">Remove</button>
+                    `;
+                    fileListContainer.appendChild(fileItem);
+                });
+            }
+
+            async function convertFiles(outputFormat) {
+                if (uploadedFiles.length === 0) {
+                    alert('Please add KML or KMZ files first.');
+                    return;
+                }
+
+                try {
+                    // Create a new JSZip instance
+                    const mergedZip = new JSZip();
+                    const mergedFeatureCollection = {
+                        type: 'FeatureCollection',
+                        features: []
+                    };
+
+                    // Process each file
+                    for (const file of uploadedFiles) {
+                        const fileContent = await file.arrayBuffer();
+                        const zip = await JSZip.loadAsync(fileContent);
+                        
+                        // Check if it's a KMZ (zip) or KML file
+                        if (file.name.toLowerCase().endsWith('.kmz')) {
+                            // Find the KML file inside the KMZ
+                            const kmlFile = Object.values(zip.files).find(f => f.name.toLowerCase().endsWith('.kml'));
+                            if (kmlFile) {
+                                const kmlContent = await kmlFile.async('string');
+                                const features = await parseKML(kmlContent);
+                                mergedFeatureCollection.features.push(...features);
+                            }
+                        } else if (file.name.toLowerCase().endsWith('.kml')) {
+                            const kmlContent = await new Response(fileContent).text();
+                            const features = await parseKML(kmlContent);
+                            mergedFeatureCollection.features.push(...features);
+                        }
+                    }
+
+                    // Convert based on output format
+                    switch(outputFormat) {
+                        case 'shp':
+                            alert('Full Shapefile conversion requires server-side processing. This is a client-side simulation.');
+                            downloadJSON(mergedFeatureCollection, 'merged.geojson');
+                            break;
+                        case 'gpkg':
+                            alert('GeoPackage conversion requires server-side processing. This is a client-side simulation.');
+                            downloadJSON(mergedFeatureCollection, 'merged.geojson');
+                            break;
+                        case 'geojson':
+                            downloadJSON(mergedFeatureCollection, 'merged.geojson');
+                            break;
+                        case 'kml':
+                            const kmlContent = convertToKML(mergedFeatureCollection);
+                            downloadText(kmlContent, 'merged.kml');
+                            break;
+                    }
+                } catch (error) {
+                    console.error('Conversion error:', error);
+                    alert('Error processing files: ' + error.message);
+                }
+            }
+
+            async function parseKML(kmlContent) {
+                // Basic KML parsing using DOM parsing
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(kmlContent, 'text/xml');
+                const placemarks = xmlDoc.getElementsByTagName('Placemark');
+                
+                const features = [];
+
+                for (const placemark of placemarks) {
+                    const feature = {
+                        type: 'Feature',
+                        properties: {},
+                        geometry: null
+                    };
+
+                    // Extract name
+                    const nameEl = placemark.getElementsByTagName('name')[0];
+                    if (nameEl) feature.properties.name = nameEl.textContent;
+
+                    // Extract description
+                    const descEl = placemark.getElementsByTagName('description')[0];
+                    if (descEl) feature.properties.description = descEl.textContent;
+
+                    // Parse geometry
+                    const geometryTypes = [
+                        { tag: 'Point', type: 'Point' },
+                        { tag: 'LineString', type: 'LineString' },
+                        { tag: 'Polygon', type: 'Polygon' }
+                    ];
+
+                    for (const geomType of geometryTypes) {
+                        const geomEl = placemark.getElementsByTagName(geomType.tag)[0];
+                        if (geomEl) {
+                            const coordinates = geomEl.getElementsByTagName('coordinates')[0];
+                            if (coordinates) {
+                                const coordText = coordinates.textContent.trim();
+                                const coords = coordText.split(/\s+/).map(coord => 
+                                    coord.split(',').map(parseFloat)
+                                );
+
+                                switch(geomType.type) {
+                                    case 'Point':
+                                        feature.geometry = {
+                                            type: 'Point',
+                                            coordinates: coords[0]
+                                        };
+                                        break;
+                                    case 'LineString':
+                                        feature.geometry = {
+                                            type: 'LineString',
+                                            coordinates: coords
+                                        };
+                                        break;
+                                    case 'Polygon':
+                                        feature.geometry = {
+                                            type: 'Polygon',
+                                            coordinates: [coords]
+                                        };
+                                        break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (feature.geometry) {
+                        features.push(feature);
+                    }
+                }
+
+                return features;
+            }
+
+            function convertToKML(featureCollection) {
+                let kmlContent = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>`;
+
+                featureCollection.features.forEach((feature, index) => {
+                    kmlContent += `
+    <Placemark>
+        <name>Feature ${index + 1}</name>`;
+                    
+                    if (feature.properties.description) {
+                        kmlContent += `
+        <description>${feature.properties.description}</description>`;
+                    }
+
+                    // Convert geometry to KML coordinates
+                    switch(feature.geometry.type) {
+                        case 'Point':
+                            kmlContent += `
+        <Point>
+            <coordinates>${feature.geometry.coordinates.join(',')}</coordinates>
+        </Point>`;
+                            break;
+                        case 'LineString':
+                            kmlContent += `
+        <LineString>
+            <coordinates>${feature.geometry.coordinates.map(coord => coord.join(',')).join(' ')}</coordinates>
+        </LineString>`;
+                            break;
+                        case 'Polygon':
+                            kmlContent += `
+        <Polygon>
+            <outerBoundaryIs>
+                <LinearRing>
+                    <coordinates>${feature.geometry.coordinates[0].map(coord => coord.join(',')).join(' ')}</coordinates>
+                </LinearRing>
+            </outerBoundaryIs>
+        </Polygon>`;
+                            break;
+                    }
+
+                    kmlContent += `
+    </Placemark>`;
+                });
+
+                kmlContent += `
+</Document>
+</kml>`;
+
+                return kmlContent;
+            }
+
+            function downloadJSON(data, filename) {
+                const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+
+            function downloadText(content, filename) {
+                const blob = new Blob([content], {type: 'text/plain'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+
+            // Add global references to functions to make them accessible
+            window.addFiles = addFiles;
+            window.removeFile = removeFile;
+            window.convertFiles = convertFiles;
+        };
+    </script>
+	<footer>
+        <p>© 2025 </p>
+        <p>Developed by AmeisenLAB, driving innovation through AI technology and thought leadership.</p>
+    </footer>
+</body>
+</html>
