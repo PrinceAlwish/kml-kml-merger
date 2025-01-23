@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Geospatial File Merger</title>
-	<link rel="icon" href="AI_1.png" type="image/png">
+    <link rel="icon" href="AI_1.png" type="image/png">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -57,7 +57,6 @@
     <div id="conversion-options">
         <h3>Convert To:</h3>
         <button onclick="convertFiles('geojson')">GeoJSON (.geojson)</button>
-    
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -72,7 +71,6 @@
                 return;
             }
 
-            // The rest of the existing script remains the same
             let uploadedFiles = [];
 
             function addFiles() {
@@ -125,8 +123,6 @@
                 }
 
                 try {
-                    // Create a new JSZip instance
-                    const mergedZip = new JSZip();
                     const mergedFeatureCollection = {
                         type: 'FeatureCollection',
                         features: []
@@ -134,43 +130,38 @@
 
                     // Process each file
                     for (const file of uploadedFiles) {
-                        const fileContent = await file.arrayBuffer();
-                        const zip = await JSZip.loadAsync(fileContent);
+                        let fileContent;
                         
-                        // Check if it's a KMZ (zip) or KML file
+                        // Handle KMZ files
                         if (file.name.toLowerCase().endsWith('.kmz')) {
-                            // Find the KML file inside the KMZ
+                            const zip = await JSZip.loadAsync(await file.arrayBuffer());
                             const kmlFile = Object.values(zip.files).find(f => f.name.toLowerCase().endsWith('.kml'));
-                            if (kmlFile) {
-                                const kmlContent = await kmlFile.async('string');
-                                const features = await parseKML(kmlContent);
-                                mergedFeatureCollection.features.push(...features);
+                            
+                            if (!kmlFile) {
+                                console.warn(`No KML file found in ${file.name}`);
+                                continue;
                             }
-                        } else if (file.name.toLowerCase().endsWith('.kml')) {
-                            const kmlContent = await new Response(fileContent).text();
-                            const features = await parseKML(kmlContent);
-                            mergedFeatureCollection.features.push(...features);
+                            
+                            fileContent = await kmlFile.async('string');
+                        } 
+                        // Handle KML files
+                        else if (file.name.toLowerCase().endsWith('.kml')) {
+                            fileContent = await file.text();
+                        } 
+                        // Skip unsupported file types
+                        else {
+                            console.warn(`Unsupported file type: ${file.name}`);
+                            continue;
                         }
+
+                        // Parse KML content
+                        const features = await parseKML(fileContent);
+                        mergedFeatureCollection.features.push(...features);
                     }
 
-                    // Convert based on output format
-                    switch(outputFormat) {
-                        case 'shp':
-                            alert('Full Shapefile conversion requires server-side processing. This is a client-side simulation.');
-                            downloadJSON(mergedFeatureCollection, 'merged.geojson');
-                            break;
-                        case 'gpkg':
-                            alert('GeoPackage conversion requires server-side processing. This is a client-side simulation.');
-                            downloadJSON(mergedFeatureCollection, 'merged.geojson');
-                            break;
-                        case 'geojson':
-                            downloadJSON(mergedFeatureCollection, 'merged.geojson');
-                            break;
-                        case 'kml':
-                            const kmlContent = convertToKML(mergedFeatureCollection);
-                            downloadText(kmlContent, 'merged.kml');
-                            break;
-                    }
+                    // Download merged GeoJSON
+                    downloadJSON(mergedFeatureCollection, 'merged.geojson');
+
                 } catch (error) {
                     console.error('Conversion error:', error);
                     alert('Error processing files: ' + error.message);
@@ -221,19 +212,19 @@
                                     case 'Point':
                                         feature.geometry = {
                                             type: 'Point',
-                                            coordinates: coords[0]
+                                            coordinates: coords[0].slice(0, 2) // Ensure only lon, lat
                                         };
                                         break;
                                     case 'LineString':
                                         feature.geometry = {
                                             type: 'LineString',
-                                            coordinates: coords
+                                            coordinates: coords.map(coord => coord.slice(0, 2)) // Ensure only lon, lat
                                         };
                                         break;
                                     case 'Polygon':
                                         feature.geometry = {
                                             type: 'Polygon',
-                                            coordinates: [coords]
+                                            coordinates: [coords.map(coord => coord.slice(0, 2))] // Ensure only lon, lat
                                         };
                                         break;
                                 }
@@ -249,72 +240,8 @@
                 return features;
             }
 
-            function convertToKML(featureCollection) {
-                let kmlContent = `<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
-<Document>`;
-
-                featureCollection.features.forEach((feature, index) => {
-                    kmlContent += `
-    <Placemark>
-        <name>Feature ${index + 1}</name>`;
-                    
-                    if (feature.properties.description) {
-                        kmlContent += `
-        <description>${feature.properties.description}</description>`;
-                    }
-
-                    // Convert geometry to KML coordinates
-                    switch(feature.geometry.type) {
-                        case 'Point':
-                            kmlContent += `
-        <Point>
-            <coordinates>${feature.geometry.coordinates.join(',')}</coordinates>
-        </Point>`;
-                            break;
-                        case 'LineString':
-                            kmlContent += `
-        <LineString>
-            <coordinates>${feature.geometry.coordinates.map(coord => coord.join(',')).join(' ')}</coordinates>
-        </LineString>`;
-                            break;
-                        case 'Polygon':
-                            kmlContent += `
-        <Polygon>
-            <outerBoundaryIs>
-                <LinearRing>
-                    <coordinates>${feature.geometry.coordinates[0].map(coord => coord.join(',')).join(' ')}</coordinates>
-                </LinearRing>
-            </outerBoundaryIs>
-        </Polygon>`;
-                            break;
-                    }
-
-                    kmlContent += `
-    </Placemark>`;
-                });
-
-                kmlContent += `
-</Document>
-</kml>`;
-
-                return kmlContent;
-            }
-
             function downloadJSON(data, filename) {
                 const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-            }
-
-            function downloadText(content, filename) {
-                const blob = new Blob([content], {type: 'text/plain'});
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
@@ -331,8 +258,8 @@
             window.convertFiles = convertFiles;
         };
     </script>
-	<footer>
-        <p>© 2025 </p>
+    <footer>
+        <p>© 2025</p>
         <p>Developed by AmeisenLAB, driving innovation through AI technology and thought leadership.</p>
     </footer>
 </body>
